@@ -1,0 +1,1029 @@
+---
+title: "Site Selector Survey Analysis"
+resource_files:
+- tempdir/STATE.shx
+- tempdir/STATE.dbf
+- tempdir/STATE.prj
+runtime: shiny
+output:
+  flexdashboard::flex_dashboard:
+    logo: www/logo.png
+    orientation: rows
+    self_contained: yes
+    source_code: embed
+    theme: spacelab
+    vertical_layout: scroll
+---
+
+```{r setup, include=FALSE}
+
+# LOAD THE LIBRARIES AND THE DATA, BASIC DATA WRANGLING
+library(shinycssloaders)
+library(shiny)
+library(flexdashboard)
+library(knitr)
+library(DT)
+library(randomForest)
+library(ggplot2)
+library(png)
+library(tidyverse)
+library(leaflet)
+library(tigris)
+library(sp)
+library(rgdal)
+library(plotly)
+library(shinycssloaders)
+library(mlbench)
+library(caret)
+library(tm)
+library(topicmodels)
+library(tidytext)
+library(wordcloud)
+st<-readOGR("tempdir/STATE.shp")
+dat<-read.csv("EDC_2017.csv",fileEncoding = "UTF-8-BOM",stringsAsFactors = F)%>%
+  dplyr::select(-c(IPAddress,StartDate,EndDate,Finished))%>%
+  dplyr::select(-Visit_UT_Business,-Visit_UT_Pleasure,-Visit_UT)
+dat<-rbind(dat %>% filter(Client_CustomerSupport ==1)%>% mutate(Industry="Customer Support"),
+  dat %>% filter(Client_Software ==1)%>% mutate(Industry="Software/ IT"),
+  dat %>% filter(Client_LifeSciences ==1)%>% mutate(Industry="Life Sciences/R&D"),
+  dat %>% filter(Client_HQ ==1)%>% mutate(Industry="Headquarters/Office"),
+  dat %>% filter(Client_Manufacturing  ==1)%>% mutate(Industry="Manufacturing"),
+  dat %>% filter(Client_DistributionCenters ==1)%>% mutate(Industry="Distribution Centers"),
+  dat %>% filter(Client_DataCenters ==1)%>% mutate(Industry="Data Centers"),
+  dat %>% filter(Client_Others  ==1)%>% mutate(Industry="Other"))%>%
+  dplyr::select(-c(Client_CustomerSupport,Client_Software,Client_LifeSciences,Client_HQ,
+                Client_Manufacturing,Client_DistributionCenters,Client_DataCenters,
+                Client_Others))
+dat<-rbind(dat,dat %>% mutate(Industry="Overall"))
+dat<-rbind(dat,dat %>% mutate(Recommend_NPS="Overall"))
+```
+
+Preferences{data-icon="fa-binoculars"}
+=======================================================================
+Column {.sidebar}
+-----------------------------------------------------------------------
+```{r}
+## INPUTS FOR THIS PAGE
+selectizeInput("nps0","Sort by Promoter Score",choices=c(unique(dat$Recommend_NPS)),multiple=TRUE,selected="Overall")
+        selectizeInput("industry0","Sort by Industry",choices=c(unique(dat$Industry)),multiple=TRUE,selected="Overall")
+ renderText({
+  x<-input$industry0
+  y<-input$nps0
+d<-dat%>% filter(Recommend_NPS %in% y,Industry %in% x) %>% dplyr::select(RespondeID)%>% distinct
+paste("Number of unique participants: ",nrow(d))
+})
+```
+
+Column {data-height=600}
+------------------------------------------------------------------------------
+
+### What factors are most important to site selectors' clients?
+```{r}
+## PRODUCES A BASIC BAR PLOT OF THE SCORE OF THE GROUP SELECTED IN EACH CATEGORY
+
+withSpinner(tagList(renderPlotly({
+  y<-input$nps0
+  x<-input$industry0
+d<-dat%>% filter(Recommend_NPS %in% y,Industry %in% x)%>%
+  dplyr::select( RespondeID,
+                 Importance_ProximityMajorMarkets, Importance_Transport,Importance_ConstructionCosts,
+                 Importance_RealEstateAvailability, Importance_RealEstateCosts, Importance_TaxIncentives,
+                 Importance_TaxEnvironment, 
+                 Importance_BusinessFriendlyGovt, Importance_LaborAvailabilityEntry,
+                 Importance_LaborAvailabilityExperienced, Importance_LaborCosts, Importance_QualityOfLife,
+                 Importance_CostOfLiving, 
+                 Importance_LaborQuality, Importance_UtilityInfra,Importance_Population,
+                 Importance_UtilityCosts, Importance_HigherEducation) %>% distinct
+nn<-length(unique(d$RespondeID))
+Factor_importance<-as.data.frame(do.call("rbind",lapply(d[,2:19],function(x)mean(x,na.rm=T)))) 
+d<-Factor_importance%>%mutate(Factor=rownames(Factor_importance))%>%
+  mutate(Factor=ifelse(Factor=="Importance_ProximityMajorMarkets","Proximity to Major Markets",Factor),
+         Factor=ifelse(Factor=="Importance_Transport","Transportation Access (road,rail,air)",Factor),
+         Factor=ifelse(Factor=="Importance_ConstructionCosts","Construction Costs",Factor),
+         Factor=ifelse(Factor=="Importance_RealEstateAvailability","Real Estate Availability",Factor),
+         Factor=ifelse(Factor=="Importance_RealEstateCost","Real Estate Cost",Factor),
+         Factor=ifelse(Factor=="Importance_TaxIncentives","Tax incentives",Factor),
+         Factor=ifelse(Factor=="Importance_TaxEnvironment","Tax Environment",Factor),
+         Factor=ifelse(Factor=="Importance_BusinessFriendlyGovt","Business Friendly Government",Factor),
+         Factor=ifelse(Factor=="Importance_LaborAvailabilityEntry","Entry Level Labor Availability",Factor),
+         Factor=ifelse(Factor=="Importance_LaborAvailabilityExperienced","Experienced Level Labor Availability",Factor),
+         Factor=ifelse(Factor=="Importance_LaborCosts","Labor Costs",Factor),
+         Factor=ifelse(Factor=="Importance_QualityOfLife","Quality of Living",Factor),
+         Factor=ifelse(Factor=="Importance_CostOfLiving","Cost of Living",Factor),
+         Factor=ifelse(Factor=="Importance_LaborQuality","Labor Quality",Factor),
+         Factor=ifelse(Factor=="Importance_UtilityInfra","Utility Infrastructure",Factor),
+         Factor=ifelse(Factor=="Importance_Population","Population",Factor),
+         Factor=ifelse(Factor=="Importance_UtilityCosts","Utility Costs",Factor),
+         Factor=ifelse(Factor=="Importance_HigherEducation","Higher Education",Factor))
+
+d$Factor <- factor(d$Factor, 
+                        levels = unique(d$Factor)[order(d$V1)])
+d <- d %>% arrange(desc(V1))
+d$col<-c(rep("#4284f5",3),rep("#ebe0dd",nrow(d)-6),rep("#e01044",3))
+library(plotly)
+library(RColorBrewer)
+x <- round(d$V1,2)
+y <- d$Factor
+
+text <- x
+p <- plot_ly(x = x, y = d$Factor, type = 'bar', orientation = 'h',
+              text = text, textposition = 'auto',marker = list(color = d$col,
+                           line = list(color = 'rgb(8,48,107)', width = 1.5)))%>%
+  layout(title = "",
+         barmode = 'group',
+         xaxis = list(title = ""),
+         yaxis = list(title = ""))
+  
+p
+})))
+```
+
+### What other factors have had a significant impact on the clients' relocation?
+```{r}
+
+## PRODUCES A BASIC BAR PLOT OF THE SCORE OF THE GROUP SELECTED IN EACH CATEGORY
+withSpinner(tagList(renderPlotly({
+  y<-input$nps0
+  x<-input$industry0
+  # y<-sample(dat$Recommend_NPS,1)
+  # x<-sample(dat[dat$Recommend_NPS %in% y,]$Industry,1)
+  d<-dat%>% filter(Recommend_NPS %in% y,Industry %in% x)%>%
+  dplyr::select( RespondeID,
+                 DecisionImpact_Diversity , DecisionImpact_AlcoholLaws,DecisionImpact_LiberalPolitocs,
+                 DecisionImpact_ConservativePolitics , DecisionImpact_Marijuana , DecisionImpact_AirQuality ,
+                 DecisionImpact_ArtsEntertainment , 
+                 DecisionImpact_Other) %>% distinct
+  
+mm_norm<-function(x){
+  1+((x-min(x,na.rm = T))/(max(x,na.rm = T)-min(x,na.rm = T)))
+}
+nn<-length(unique(d$RespondeID))
+d[,2:9]<-lapply(d[,2:9],function(x)factor(x,levels=c("Never","Seldom","Often")))
+d[,2:9]<-lapply(d[,2:9],as.numeric)
+d[,2:9]<-lapply(d[,2:9],function(x)2.5*mm_norm(x))
+Factor_importance<-as.data.frame(do.call("rbind",lapply(d[,2:9],function(x)mean(x,na.rm=T)))) 
+d<-Factor_importance%>%mutate(Factor=rownames(Factor_importance))%>%
+  mutate(Factor=ifelse(Factor=="DecisionImpact_Diversity","Diversity",Factor),
+         Factor=ifelse(Factor=="DecisionImpact_AlcoholLaws","Alcohol Laws",Factor),
+         Factor=ifelse(Factor=="DecisionImpact_LiberalPolitocs","Liberal Politics",Factor),
+         Factor=ifelse(Factor=="DecisionImpact_ConservativePolitics","Conservative Politics",Factor),
+         Factor=ifelse(Factor=="DecisionImpact_Marijuana","Marijuana",Factor),
+         Factor=ifelse(Factor=="DecisionImpact_AirQuality","Air Quality",Factor),
+         Factor=ifelse(Factor=="DecisionImpact_ArtsEntertainment","Arts/Entertainment",Factor),
+         Factor=ifelse(Factor=="DecisionImpact_Other","Other",Factor))
+
+d$Factor <- factor(d$Factor, 
+                        levels = unique(d$Factor)[order(d$V1)])
+d <- d %>% arrange(desc(V1))
+d$col<-c(rep("#4284f5",2),rep("#ebe0dd",nrow(d)-4),rep("#e01044",2))
+library(plotly)
+x <- round(d$V1,2)
+y <- d$Factor
+text <- x
+p <- plot_ly(x = x, y = d$Factor, type = 'bar', orientation = 'h',
+              text = text, textposition = 'auto',marker = list(color = d$col,
+                           line = list(color = 'rgb(8,48,107)', width = 1.5)))%>%
+  layout(title = "",
+         barmode = 'group',
+         xaxis = list(title = ""),
+         yaxis = list(title = ""))
+  
+p
+})))
+```
+
+Recommendations{data-icon="fa-line-chart"}
+=======================================================================
+Column {.sidebar}
+-----------------------------------------------------------------------
+```{r}
+## INPUTS FOR THIS PAGE
+selectizeInput("nps1","Sort by Promoter Score",choices=c(unique(dat$Recommend_NPS)),multiple=TRUE,selected="Overall")
+        selectizeInput("industry1","Sort by Industry",choices=c(unique(dat$Industry)),multiple=TRUE,selected="Overall")
+        renderText({
+  x<-input$industry1
+  y<-input$nps1
+d<-dat%>% filter(Recommend_NPS %in% y,Industry %in% x) %>% dplyr::select(RespondeID)%>% distinct
+paste("Number of unique participants: ",nrow(d))
+})
+```
+
+Column
+-----------------------------------------------------------------------
+
+### What factors were the most influential in the recommendation of Utah?
+
+```{r}
+## USE RANDOM FOREST TO FIND THE FACTORS THAT ARE MOST IMPORTANT IN EXPLAINING THE VARIATION OF RECOMMENDATION OF UTAH
+## THE X-AXIS is the INCREASE IN MSE OF THE PREDICTIONS (estimated with out-of-bag-crossvalidation) as a result
+## of any given variables being changed or permuted (randomly)
+renderPlotly({
+  y<-input$nps1
+    x<-input$industry1
+# load the library
+  # x<-"Overall"
+  # y<-"Overall"
+  ifelse(x=="Overall",x<-unique(dat$Industry[dat$Industry!="Overall"]),x<-x)
+  ifelse(y=="Overall",y<-unique(dat$Recommend_NPS[dat$Recommend_NPS!="Overall"]),y<-y)
+  d<-dat%>% filter(Recommend_NPS %in% y,Industry %in% x)%>%
+    dplyr::select(-c(Recommend_NPS,Recommend_Reason,IndustryAssocation_OthersDesc,DecisionImpact_OtherDesc,
+                     BestIncentiveReason_OtherDesc))%>% distinct
+  
+  d[,2:11]<-lapply(d[,2:11],scale)
+  d[,12:13]<-lapply(d[,12:13],as.factor)
+  d[,24]<-factor(d[,24])
+  d[,25:64]<-lapply(d[,25:64],scale)
+  d[,65]<-factor(d[,65])
+  d[,134]<-factor(d[,134])
+  d[,66:71]<-lapply(d[,66:71],scale)
+  d[,72:125]<-lapply(d[,72:125],as.factor)
+  d[,65]<-factor(d[,65])
+  d[,126:133]<-lapply(d[,126:133],function(x)factor(x,levels=c("Never","Seldom","Often")))
+d[,126:133]<-lapply(d[,126:133],as.numeric)
+d[,126:133]<-lapply(d[,126:133],function(x)scale(x))
+  d[,15:23]<-NULL
+set.seed(4543)
+d<-d%>%dplyr::select(-c(RespondeID,BusinessClimate_UT,State_Considered_Relocation,
+                        Last_Consider_UT))
+#d<-d %>% dplyr::select(Recommend, Industry, BusinessClimate_UT)
+d<-d[complete.cases(d),]
+# Random Forest relative importance of variables as predictors
+rffit <- randomForest(Recommend ~ . , data=d, ntree=2000,keep.forest=FALSE, importance=TRUE)
+i<-as.data.frame(importance(rffit))
+i<-i %>%mutate(Factor=row.names(i))%>% arrange(desc(`%IncMSE`))%>%
+  mutate(Factor=ifelse(Factor=="DecisionImpact_Diversity","Decision Impact : Diversity",Factor),
+         Factor=ifelse(Factor=="DecisionImpact_AlcoholLaws","Decision Impact : Alcohol Laws",Factor),
+         Factor=ifelse(Factor=="DecisionImpact_LiberalPolitocs","Decision Impact : Liberal Politics",Factor),
+         Factor=ifelse(Factor=="DecisionImpact_ConservativePolitics","Decision Impact : Conservative Politics",Factor),
+         Factor=ifelse(Factor=="DecisionImpact_Marijuana","Decision Impact : Marijuana",Factor),
+         Factor=ifelse(Factor=="DecisionImpact_AirQuality","Decision Impact : Air Quality",Factor),
+         Factor=ifelse(Factor=="DecisionImpact_ArtsEntertainment","Decision Impact : Arts/Entertainment",Factor),
+         Factor=ifelse(Factor=="DecisionImpact_Other","Decision Impact : Other",Factor))%>%
+  mutate(Factor=ifelse(Factor=="Importance_ProximityMajorMarkets","Decision Impact : Proximity to Major Markets",Factor),
+         Factor=ifelse(Factor=="Importance_Transport","Decision Impact : Transportation Access (road,rail,air)",Factor),
+         Factor=ifelse(Factor=="Importance_ConstructionCosts","Decision Impact : Construction Costs",Factor),
+         Factor=ifelse(Factor=="Importance_RealEstateAvailability","Decision Impact : Real Estate Availability",Factor),
+         Factor=ifelse(Factor=="Importance_RealEstateCost","Decision Impact : Real Estate Cost",Factor),
+         Factor=ifelse(Factor=="Importance_TaxIncentives","Decision Impact : Tax incentives",Factor),
+         Factor=ifelse(Factor=="Importance_TaxEnvironment","Decision Impact : Tax Environment",Factor),
+         Factor=ifelse(Factor=="Importance_BusinessFriendlyGovt","Decision Impact : Business Friendly Government",Factor),
+         Factor=ifelse(Factor=="Importance_LaborAvailabilityEntry","Decision Impact : Entry Level Labor Availability",Factor),
+         Factor=ifelse(Factor=="Importance_LaborAvailabilityExperienced","Decision Impact : Experienced Level Labor Availability",Factor),
+         Factor=ifelse(Factor=="Importance_LaborCosts","Decision Impact : Labor Costs",Factor),
+         Factor=ifelse(Factor=="Importance_QualityOfLife","Decision Impact : Quality of Living",Factor),
+         Factor=ifelse(Factor=="Importance_CostOfLiving","Decision Impact : Cost of Living",Factor),
+         Factor=ifelse(Factor=="Importance_LaborQuality","Decision Impact : Labor Quality",Factor),
+         Factor=ifelse(Factor=="Importance_UtilityInfra","Decision Impact : Utility Infrastructure",Factor),
+         Factor=ifelse(Factor=="Importance_Population","Decision Impact : Population",Factor),
+         Factor=ifelse(Factor=="Importance_UtilityCosts","Decision Impact : Utility Costs",Factor),
+         Factor=ifelse(Factor=="Importance_HigherEducation","Decision Impact : Higher Education",Factor))%>%
+  mutate(Factor=ifelse(Factor=="Compare_ProximityMajorMarkets","How Utah compares : Proximity to Major Markets",Factor),
+         Factor=ifelse(Factor=="Compare_Transport","How Utah compares : Transportation Access (road,rail,air)",Factor),
+         Factor=ifelse(Factor=="Compare_ConstructionCosts","How Utah compares : Construction Costs",Factor),
+         Factor=ifelse(Factor=="Compare_RealEstateAvailability","How Utah compares : Real Estate Availability",Factor),
+                  Factor=ifelse(Factor=="Compare_RealEstateCosts","How Utah compares : Real Estate Costs",Factor),
+         Factor=ifelse(Factor=="Compare_TaxIncentives","How Utah compares : Tax incentives",Factor),
+         Factor=ifelse(Factor=="Compare_TaxEnvironment","How Utah compares : Tax Environment",Factor),
+         Factor=ifelse(Factor=="Compare_BusinessFriendlyGovt","How Utah compares : Business Friendly Government",Factor),
+         Factor=ifelse(Factor=="Compare_LaborAvailabilityEntry","How Utah compares : Entry Level Labor Availability",Factor),
+         Factor=ifelse(Factor=="Compare_LaborAvailabilityExperienced","How Utah compares : Experienced Level Labor Availability",Factor),
+         Factor=ifelse(Factor=="Compare_LaborCosts","How Utah compares : Labor Costs",Factor),
+         Factor=ifelse(Factor=="Compare_QualityOfLife","How Utah compares : Quality of Living",Factor),
+         Factor=ifelse(Factor=="Compare_CostOfLiving","How Utah compares : Cost of Living",Factor),
+         Factor=ifelse(Factor=="Compare_LaborQuality","How Utah compares : Labor Quality",Factor),
+         Factor=ifelse(Factor=="Compare_UtilityInfra","How Utah compares : Utility Infrastructure",Factor),
+         Factor=ifelse(Factor=="Compare_Population","How Utah compares : Population",Factor),
+         Factor=ifelse(Factor=="Compare_UtilityCosts","How Utah compares : Utility Costs",Factor),
+         Factor=ifelse(Factor=="Compare_HigherEducation","How Utah compares : Higher Education",Factor)) %>%
+  mutate(Factor=gsub("_",":",Factor))
+
+i<-i[1:10,]
+i$Factor <- factor(i$Factor, 
+                        levels = unique(i$Factor)[order(i$`%IncMSE`)])
+library(plotly)
+x <- round(i$`%IncMSE`,1)
+y <- i$Factor
+text <- paste(round(i$`%IncMSE`,1),"%",sep="")
+p <- plot_ly(x = x, y = y, type = 'bar', orientation = 'h',
+              text = text, textposition = 'auto',marker = list(color = '#4284f5',
+                           line = list(color = 'rgb(8,48,107)', width = 1.5)))%>%
+  layout(title = "",
+         barmode = 'group',
+         xaxis = list(title = "How much predictions would change if the variable on the y-axis changed"),
+         yaxis = list(title = ""))
+  
+p
+})
+```
+
+Column
+------------------------------------------------------------------------------
+
+
+### What groups of themes emerge in recommending Utah? Group 1
+
+```{r}
+## USE LATENT DIRICHELT ALLOCATION (TOPIC MODELEING) AND PROJECT WORDS WITH THE HIGHEST BETA FOR EACH TOPIC AND CREATE WORDCLOUD
+## NUMBER OF TOPICS IS 3.
+renderPlot({
+y<-input$nps1
+    x<-input$industry1
+d<-dat %>% filter(Recommend_NPS %in% x,Industry %in% y) %>% dplyr::select(Recommend_Reason)
+Custom_Transform <- function(x){
+  x=tolower(x)
+  x= gsub("quality of ","quality_of_",x)
+  x= gsub(" force ","force",x)
+  x= gsub("business climate ","business_climate",x)
+}
+d$Recommend_Reason<-Custom_Transform(d$Recommend_Reason)
+myCorpus <- Corpus(VectorSource(d$Recommend_Reason))
+myCorpus<-tm_map(myCorpus,stripWhitespace)
+myCorpus<-tm_map(myCorpus,stemDocument)
+myCorpus<-tm_map(myCorpus,content_transformer(tolower))
+myCorpus<-tm_map(myCorpus,removePunctuation)
+myCorpus<-tm_map(myCorpus,removeNumbers)
+myCorpus<-tm_map(myCorpus,removePunctuation)
+myCorpus<-tm_map(myCorpus,removeWords,stopwords("en"))
+myCorpus<-tm_map(myCorpus,removeWords,c("utah","business","busi",
+                                        "high","lack","great",
+                                        "salt","lake","good","state","project"))
+
+dtm <- DocumentTermMatrix(myCorpus)
+rowTotals <- apply(dtm , 1, sum)
+dtm.new   <- dtm[rowTotals> 0, ]
+ap_lda <- LDA(dtm.new, k = 3, control = list(seed = 1234))
+ap_topics <- tidy(ap_lda, matrix = "beta")
+ap_topics
+ap_top_terms <- ap_topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+a<-ap_top_terms %>% filter(topic==1)
+b<-ap_top_terms %>% filter(topic==1)
+d<-ap_top_terms %>% filter(topic==1)
+
+wordcloud(words = a$term, freq = round(100*a$beta), min.freq = 1,
+          max.words=200, random.order=FALSE,
+          colors=brewer.pal(8, "Blues"))
+# 
+# 
+# a<-ap_top_terms %>%
+#   mutate(term = reorder(term, beta)) %>%
+#   ggplot(aes(term, beta, fill = factor(topic))) +
+#   geom_col(show.legend = FALSE) + 
+#   scale_fill_brewer(palette="Blues")+
+#   theme(axis.title.x=element_blank(),
+#         axis.title.y=element_blank(),
+#         axis.text.x=element_blank(),
+#         axis.ticks.x=element_blank())+
+#   facet_wrap(~ topic, scales = "free") +
+#   coord_flip()
+# ggplotly(a)
+
+
+})
+```
+
+### Group 2
+
+```{r}
+### SECOND WORDCLOUD 
+renderPlot({
+y<-input$nps1
+    x<-input$industry1
+d<-dat %>% filter(Recommend_NPS %in% x,Industry %in% y) %>% dplyr::select(Recommend_Reason)
+Custom_Transform <- function(x){
+  x=tolower(x)
+  x= gsub("quality of ","quality_of_",x)
+  x= gsub(" force ","force",x)
+  x= gsub("business climate ","business_climate",x)
+}
+d$Recommend_Reason<-Custom_Transform(d$Recommend_Reason)
+myCorpus <- Corpus(VectorSource(d$Recommend_Reason))
+myCorpus<-tm_map(myCorpus,stripWhitespace)
+myCorpus<-tm_map(myCorpus,stemDocument)
+myCorpus<-tm_map(myCorpus,content_transformer(tolower))
+myCorpus<-tm_map(myCorpus,removePunctuation)
+myCorpus<-tm_map(myCorpus,removeNumbers)
+myCorpus<-tm_map(myCorpus,removePunctuation)
+myCorpus<-tm_map(myCorpus,removeWords,stopwords("en"))
+myCorpus<-tm_map(myCorpus,removeWords,c("utah","business","busi",
+                                        "high","lack","great",
+                                        "salt","lake","good","state","project"))
+
+dtm <- DocumentTermMatrix(myCorpus)
+rowTotals <- apply(dtm , 1, sum)
+dtm.new   <- dtm[rowTotals> 0, ]
+ap_lda <- LDA(dtm.new, k = 3, control = list(seed = 1234))
+ap_topics <- tidy(ap_lda, matrix = "beta")
+ap_topics
+ap_top_terms <- ap_topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+a<-ap_top_terms %>% filter(topic==1)
+b<-ap_top_terms %>% filter(topic==2)
+d<-ap_top_terms %>% filter(topic==3)
+
+wordcloud(words = b$term, freq = round(100*b$beta), min.freq = 1,
+          max.words=200, random.order=FALSE,
+          colors=brewer.pal(8, "Blues"))
+# 
+# 
+# a<-ap_top_terms %>%
+#   mutate(term = reorder(term, beta)) %>%
+#   ggplot(aes(term, beta, fill = factor(topic))) +
+#   geom_col(show.legend = FALSE) + 
+#   scale_fill_brewer(palette="Blues")+
+#   theme(axis.title.x=element_blank(),
+#         axis.title.y=element_blank(),
+#         axis.text.x=element_blank(),
+#         axis.ticks.x=element_blank())+
+#   facet_wrap(~ topic, scales = "free") +
+#   coord_flip()
+# ggplotly(a)
+
+
+})
+```
+
+### Group 3
+
+```{r}
+### THIRD WORDCLOUD 
+renderPlot({
+y<-input$nps1
+    x<-input$industry1
+d<-dat %>% filter(Recommend_NPS %in% x,Industry %in% y) %>% dplyr::select(Recommend_Reason)
+Custom_Transform <- function(x){
+  x=tolower(x)
+  x= gsub("quality of ","quality_of_",x)
+  x= gsub(" force ","force",x)
+  x= gsub("business climate ","business_climate",x)
+}
+d$Recommend_Reason<-Custom_Transform(d$Recommend_Reason)
+myCorpus <- Corpus(VectorSource(d$Recommend_Reason))
+myCorpus<-tm_map(myCorpus,stripWhitespace)
+myCorpus<-tm_map(myCorpus,stemDocument)
+myCorpus<-tm_map(myCorpus,content_transformer(tolower))
+myCorpus<-tm_map(myCorpus,removePunctuation)
+myCorpus<-tm_map(myCorpus,removeNumbers)
+myCorpus<-tm_map(myCorpus,removePunctuation)
+myCorpus<-tm_map(myCorpus,removeWords,stopwords("en"))
+myCorpus<-tm_map(myCorpus,removeWords,c("utah","business","busi",
+                                        "high","lack","great",
+                                        "salt","lake","good","state","project"))
+
+dtm <- DocumentTermMatrix(myCorpus)
+rowTotals <- apply(dtm , 1, sum)
+dtm.new   <- dtm[rowTotals> 0, ]
+ap_lda <- LDA(dtm.new, k = 3, control = list(seed = 1234))
+ap_topics <- tidy(ap_lda, matrix = "beta")
+ap_topics
+ap_top_terms <- ap_topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+a<-ap_top_terms %>% filter(topic==1)
+b<-ap_top_terms %>% filter(topic==1)
+d<-ap_top_terms %>% filter(topic==1)
+
+wordcloud(words = d$term, freq = round(100*d$beta), min.freq = 1,
+          max.words=200, random.order=FALSE,
+          colors=brewer.pal(8, "Blues"))
+# 
+# 
+# a<-ap_top_terms %>%
+#   mutate(term = reorder(term, beta)) %>%
+#   ggplot(aes(term, beta, fill = factor(topic))) +
+#   geom_col(show.legend = FALSE) + 
+#   scale_fill_brewer(palette="Blues")+
+#   theme(axis.title.x=element_blank(),
+#         axis.title.y=element_blank(),
+#         axis.text.x=element_blank(),
+#         axis.ticks.x=element_blank())+
+#   facet_wrap(~ topic, scales = "free") +
+#   coord_flip()
+# ggplotly(a)
+
+
+})
+```
+
+Perception{data-icon="fa-eye"}
+=======================================================================
+
+Column {.sidebar}
+-----------------------------------------------------------------------
+
+```{r}
+## INPUTS FOR THIS PAGE
+selectizeInput("nps2","Sort by Promoter Score",choices=c(unique(dat$Recommend_NPS)),multiple=TRUE,selected="Overall")
+selectizeInput("industry2","Sort by Industry",choices=c(unique(dat$Industry)),multiple=TRUE,selected="Overall")
+renderText({
+  x<-input$industry2
+  y<-input$nps2
+d<-dat%>% filter(Recommend_NPS %in% y,Industry %in% x) %>% dplyr::select(RespondeID)%>% distinct
+paste("Number of unique participants: ",nrow(d))
+})
+```
+
+Column
+------------------------------------------------------------------------------
+
+### How is Utah ranked in the categories that site selectors find most important?
+
+```{r}
+## UNDERSTAND HOW UTAH COMPARES ACCORDING TO THE SITE SELECTORS, ARRANGED BY  IMPORTANCE OF THE FACTOR TO THE SITE SELECTOR
+
+renderPlotly({
+  
+  y<-input$nps2
+  x<-input$industry2
+  # y<-sample(dat$Recommend_NPS,1)
+  # x<-sample(dat[dat$Recommend_NPS %in% y,]$Industry,1)
+  d<-dat%>% filter(Recommend_NPS %in% y,Industry %in% x)%>%
+  dplyr::select( RespondeID,
+                 Importance_ProximityMajorMarkets, Importance_Transport,Importance_ConstructionCosts,
+                 Importance_RealEstateAvailability, Importance_RealEstateCosts, Importance_TaxIncentives,
+                 Importance_TaxEnvironment, 
+                 Importance_BusinessFriendlyGovt, Importance_LaborAvailabilityEntry,
+                 Importance_LaborAvailabilityExperienced, Importance_LaborCosts, Importance_QualityOfLife,
+                 Importance_CostOfLiving, 
+                 Importance_LaborQuality, Importance_UtilityInfra,Importance_Population,
+                 Importance_UtilityCosts, Importance_HigherEducation) %>% distinct
+nn<-length(unique(d$RespondeID))
+Factor_importance<-as.data.frame(do.call("rbind",lapply(d[,2:19],function(x)mean(x,na.rm=T)))) 
+d<-Factor_importance%>%mutate(Factor=rownames(Factor_importance))%>%
+  mutate(Factor=ifelse(Factor=="Importance_ProximityMajorMarkets","Proximity to Major Markets",Factor),
+         Factor=ifelse(Factor=="Importance_Transport","Transportation Access (road,rail,air)",Factor),
+         Factor=ifelse(Factor=="Importance_ConstructionCosts","Construction Costs",Factor),
+         Factor=ifelse(Factor=="Importance_RealEstateAvailability","Real Estate Availability",Factor),
+         Factor=ifelse(Factor=="Importance_RealEstateCosts","Real Estate Costs",Factor),
+         Factor=ifelse(Factor=="Importance_TaxIncentives","Tax incentives",Factor),
+         Factor=ifelse(Factor=="Importance_TaxEnvironment","Tax Environment",Factor),
+         Factor=ifelse(Factor=="Importance_BusinessFriendlyGovt","Business Friendly Government",Factor),
+         Factor=ifelse(Factor=="Importance_LaborAvailabilityEntry","Entry Level Labor Availability",Factor),
+         Factor=ifelse(Factor=="Importance_LaborAvailabilityExperienced","Experienced Level Labor Availability",Factor),
+         Factor=ifelse(Factor=="Importance_LaborCosts","Labor Costs",Factor),
+         Factor=ifelse(Factor=="Importance_QualityOfLife","Quality of Living",Factor),
+         Factor=ifelse(Factor=="Importance_CostOfLiving","Cost of Living",Factor),
+         Factor=ifelse(Factor=="Importance_LaborQuality","Labor Quality",Factor),
+         Factor=ifelse(Factor=="Importance_UtilityInfra","Utility Infrastructure",Factor),
+         Factor=ifelse(Factor=="Importance_Population","Population",Factor),
+         Factor=ifelse(Factor=="Importance_UtilityCosts","Utility Costs",Factor),
+         Factor=ifelse(Factor=="Importance_HigherEducation","Higher Education",Factor))
+
+d$Factor <- factor(d$Factor, 
+                        levels = unique(d$Factor)[order(d$V1)])
+d <- d %>% arrange(desc(V1))
+d$col<-c(rep("#4284f5",3),rep("#ebe0dd",nrow(d)-6),rep("#e01044",3))
+library(plotly)
+library(RColorBrewer)
+x1 <- round(d$V1,2)
+y1 <- d$Factor
+
+text <- x1
+
+d<- d %>% mutate(Rank=row_number())  
+dx<-paste(d$Factor,d$Rank)
+d1<-dat%>% filter(Recommend_NPS %in% y,Industry %in% x)%>%
+  dplyr::select( RespondeID,
+                 Compare_ProximityMajorMarkets, Compare_Transport,Compare_ConstructionCosts,
+                 Compare_RealEstateAvailability, Compare_RealEstateCosts, Compare_TaxIncentives,
+                 Compare_TaxEnvironment, 
+                 Compare_BusinessFriendlyGovt, Compare_LaborAvailabilityEntry,
+                 Compare_LaborAvailabilityExperienced, Compare_LaborCosts, Compare_QualityOfLife,
+                 Compare_CostOfLiving, 
+                 Compare_LaborQuality, Compare_UtilityInfra,Compare_Population,
+                 Compare_UtilityCosts, Compare_HigherEducation) %>% distinct
+nn<-length(unique(d1$RespondeID))
+Factor_importance<-as.data.frame(do.call("rbind",lapply(d1[,2:19],function(x)mean(x,na.rm=T)))) 
+d1<-Factor_importance%>%mutate(Factor=rownames(Factor_importance))%>%
+  mutate(Factor=ifelse(Factor=="Compare_ProximityMajorMarkets","Proximity to Major Markets",Factor),
+         Factor=ifelse(Factor=="Compare_Transport","Transportation Access (road,rail,air)",Factor),
+         Factor=ifelse(Factor=="Compare_ConstructionCosts","Construction Costs",Factor),
+         Factor=ifelse(Factor=="Compare_RealEstateAvailability","Real Estate Availability",Factor),
+                  Factor=ifelse(Factor=="Compare_RealEstateCosts","Real Estate Costs",Factor),
+         Factor=ifelse(Factor=="Compare_TaxIncentives","Tax incentives",Factor),
+         Factor=ifelse(Factor=="Compare_TaxEnvironment","Tax Environment",Factor),
+         Factor=ifelse(Factor=="Compare_BusinessFriendlyGovt","Business Friendly Government",Factor),
+         Factor=ifelse(Factor=="Compare_LaborAvailabilityEntry","Entry Level Labor Availability",Factor),
+         Factor=ifelse(Factor=="Compare_LaborAvailabilityExperienced","Experienced Level Labor Availability",Factor),
+         Factor=ifelse(Factor=="Compare_LaborCosts","Labor Costs",Factor),
+         Factor=ifelse(Factor=="Compare_QualityOfLife","Quality of Living",Factor),
+         Factor=ifelse(Factor=="Compare_CostOfLiving","Cost of Living",Factor),
+         Factor=ifelse(Factor=="Compare_LaborQuality","Labor Quality",Factor),
+         Factor=ifelse(Factor=="Compare_UtilityInfra","Utility Infrastructure",Factor),
+         Factor=ifelse(Factor=="Compare_Population","Population",Factor),
+         Factor=ifelse(Factor=="Compare_UtilityCosts","Utility Costs",Factor),
+         Factor=ifelse(Factor=="Compare_HigherEducation","Higher Education",Factor))
+
+d1<-d1 %>% merge(d[,c("Factor","Rank")],all.x=T)
+d1$Factor<- paste(d1$Factor," Rank: ",d1$Rank,sep="")
+d1$Factor<-factor(d1$Factor,levels=unique(d1$Factor)[order(d1$Rank,decreasing = T)])
+d1$V1<-d1$V1-3
+d1$col<-ifelse(d1$V1>0,"#4284f5","#e01044")
+p <- plot_ly(x = d1$V1, y = d1$Factor, type = 'bar', orientation = 'h',
+              text = round(d1$V1,2), textposition = 'auto',marker = list(color = d1$col,
+                           line = list(color = 'rgb(8,48,107)', width = 1.5)))%>%
+  layout(title = "",
+         barmode = 'group',
+         xaxis = list(title = "",range=c(-1,1.5)),
+         yaxis = list(title = ""))
+p
+})
+```
+
+Column 
+------------------------------------------------------------------------------
+
+### What industries generally are associated with Utah?
+
+```{r}
+## BAR CHART ANSWERING THE QUESTION
+renderPlotly({
+  x<-input$industry2
+  y<-input$nps2
+d<-dat%>% filter(Recommend_NPS %in% y,Industry %in% x) %>%dplyr::select(RespondeID,IndustryAssocation_Outdoors,IndustryAssocation_EnergyNaturalResources, IndustryAssocation_FinancialServices, IndustryAssocation_AerospaceDefence,IndustryAssocation_Manufacturing, 
+                        IndustryAssocation_Software, IndustryAssocation_LifeSciences, IndustryAssocation_DataCenter,
+                         IndustryAssocation_Others, IndustryAssocation_OthersDesc)%>% distinct
+d<-rbind(d %>% filter(IndustryAssocation_Outdoors ==1)%>% mutate(Association="Outdoors"),
+  d %>% filter(IndustryAssocation_EnergyNaturalResources ==1)%>% mutate(Association="Energy/Nat. Resources"),
+  d %>% filter(IndustryAssocation_FinancialServices ==1)%>% mutate(Association="Financial Services"),
+  d %>% filter(IndustryAssocation_AerospaceDefence ==1)%>% mutate(Association="Aerospace/Defense"),
+  d %>% filter(IndustryAssocation_Manufacturing ==1)%>% mutate(Association="Manufacturing"),
+  d %>% filter(IndustryAssocation_Software ==1)%>% mutate(Association="Software"),
+  d %>% filter(IndustryAssocation_LifeSciences ==1)%>% mutate(Association="Life Sciences"),
+  d %>% filter(IndustryAssocation_DataCenter ==1)%>% mutate(Association="Data Center"),
+  d %>% filter(IndustryAssocation_Others ==1)%>% mutate(Association="Other"),
+  d %>% filter(IndustryAssocation_OthersDesc =="Tech")%>% mutate(Association="Software"),
+  d %>% filter(IndustryAssocation_OthersDesc =="Fintech")%>% mutate(Association="Financial Services"),
+  d %>% filter(IndustryAssocation_OthersDesc %in% c("Call centers","Customer Service Operations / ","Sales",
+                                                    "Shared Service Centers"))%>% mutate(Association="Customer Service/Call Center")
+  )%>%
+  dplyr::select(RespondeID,Association)%>% distinct %>% arrange(RespondeID)
+nn<-length(unique(d$RespondeID))
+d<-d %>% plyr::count("Association") %>% mutate(percent=100*freq/sum(freq))
+d$Association <- factor(d$Association, 
+                        levels = unique(d$Association)[order(d$percent)])
+library(plotly)
+x <- round(d$percent,1)
+y <- d$Association
+text <- paste(round(d$percent,1),"%",sep="")
+p <- plot_ly(x = round(d$percent,1), y = d$Association, type = 'bar', orientation = 'h',
+              text = text, textposition = 'auto',marker = list(color = '#4284f5',
+                           line = list(color = 'rgb(8,48,107)', width = 1.5)))%>%
+  layout(title = "",
+         barmode = 'group',
+         xaxis = list(title = ""),
+         yaxis = list(title = ""))
+  
+p
+})
+```
+
+Competing States{data-icon="fa-crosshairs"}
+=======================================================================
+Column {.sidebar}
+-----------------------------------------------------------------------
+
+```{r}
+## INPUTS FOR THIS PAGE
+selectizeInput("nps4","Sort by Promoter Score",choices=c(unique(dat$Recommend_NPS)),multiple=TRUE,selected="Overall")
+selectizeInput("industry4","Sort by Industry",choices=c(unique(dat$Industry)),multiple=TRUE,selected="Overall")
+renderText({
+  x<-input$industry4
+  y<-input$nps4
+d<-dat%>% filter(Recommend_NPS %in% y,Industry %in% x) %>% dplyr::select(RespondeID)%>% distinct
+paste("Number of unique participants: ",nrow(d))
+})
+```
+
+
+Column {data-height=600}
+------------------------------------------------------------------------------
+
+### Business Climate Rating
+
+```{r}
+## MAP OF AVERAGE SCORE OF BUSINESS CLIMATE RATING
+renderLeaflet({
+  x<-input$industry4
+  y<-input$nps4
+  # y<-sample(dat$Recommend_NPS,1)
+  # x<-sample(dat[dat$Recommend_NPS %in% y,]$Industry,1)
+  d<-dat %>% filter(Industry %in% x,
+                 Recommend_NPS %in% y)%>% dplyr::select(RespondeID,BusinessClimate_AZ,BusinessClimate_CA, BusinesClimate_CO,BusinessClimate_ID,BusinessClimate_NV,BusinessClimate_OR, BusinessClimate_UT,BusinessClimate_WA,
+                                                                 BusinessClimate_TX, BusinessClimate_NM) %>% distinct
+  
+ BusinessClimate<-as.data.frame(do.call("rbind",lapply(d[,2:11],function(x)mean(x,na.rm=T))))
+ BusinessClimate<-BusinessClimate%>%mutate(STUSPS=gsub("Busine.+Climate_","",row.names(BusinessClimate)))%>% arrange(STUSPS)
+ st1<-sp::merge(st,BusinessClimate)
+ st1<-st1[st1$STUSPS %in% BusinessClimate$STUSPS,]
+ ch.pal.count <-colorBin('RdYlGn', domain = (min(st1$V1)):5)
+
+ new_map <- leaflet() %>%
+  addProviderTiles("CartoDB.Positron",
+                   options = providerTileOptions(minZoom = 4,
+                                                 maxZoom = 6)) %>%
+  addPolygons(
+    data = st1,
+    layerId = ~ st1$STUSPS,
+    fillColor = ch.pal.count(st1$V1),
+    weight = .5,
+    opacity = 1,
+    color = "#666666",
+    dashArray = "",
+    fillOpacity = 0.7,
+    highlight = highlightOptions(
+      weight = .5,
+      color = 'black',
+      dashArray = '',
+      fillOpacity = 0.7,
+      bringToFront = TRUE
+    ),
+      label =  st1$NAME
+  ) %>%
+  addLabelOnlyMarkers(
+    lng = coordinates(st1)[, 1],
+    lat = coordinates(st1)[, 2],
+    label = as.character(round(st1$V1,1)),
+    labelOptions = labelOptions(
+      noHide = T,
+      direction = 'center',
+      textOnly = T,
+      textsize = '30px'
+    )
+  ) %>%
+  leaflet::addLegend(
+    "topright",
+    pal = ch.pal.count,
+    values =  st1$V1,
+    title = paste("Average Score (",nrow(d),") Participants",sep=""),
+    opacity = 0.7
+  )
+new_map
+})
+```
+
+### State Recommendation
+
+```{r}
+## MAP OF THE VOTES TOWARD WHICH STATE EACH PARTICPANT WOULD RECOMMEND
+renderLeaflet({
+  x<-input$industry4
+  y<-input$nps4
+  # y<-sample(dat$Recommend_NPS,1)
+  # x<-sample(dat[dat$Recommend_NPS %in% y,]$Industry,1)
+  d<-dat %>% filter(Industry %in% x,
+                 Recommend_NPS %in% y)%>% dplyr::select(RespondeID,State_Considered_Relocation) %>% distinct
+  
+ BusinessClimate<-as.data.frame(d %>% plyr::count("State_Considered_Relocation"))
+ BusinessClimate<-BusinessClimate%>%rename(STUSPS=State_Considered_Relocation)%>% arrange(STUSPS)
+ st1<-sp::merge(st,BusinessClimate)
+ st1<-st1[st1$STUSPS %in% BusinessClimate$STUSPS,]
+ ch.pal.count <-colorBin('RdYlGn', domain = (range(st1$freq)))
+
+ new_map <- leaflet() %>%
+  addProviderTiles("CartoDB.Positron",
+                   options = providerTileOptions(minZoom = 4,
+                                                 maxZoom = 6)) %>%
+  addPolygons(
+    data = st1,
+    layerId = ~ st1$STUSPS,
+    fillColor = ch.pal.count(st1$freq),
+    weight = .5,
+    opacity = 1,
+    color = "#666666",
+    dashArray = "",
+    fillOpacity = 0.7,
+    highlight = highlightOptions(
+      weight = .5,
+      color = 'black',
+      dashArray = '',
+      fillOpacity = 0.7,
+      bringToFront = TRUE
+    ),
+      label =  st1$NAME
+  ) %>%
+  addLabelOnlyMarkers(
+    lng = coordinates(st1)[, 1],
+    lat = coordinates(st1)[, 2],
+    label = as.character(round(st1$freq,1)),
+    labelOptions = labelOptions(
+      noHide = T,
+      direction = 'center',
+      textOnly = T,
+      textsize = '30px'
+    )
+  ) %>%
+  leaflet::addLegend(
+    "topright",
+    pal = ch.pal.count,
+    values =  st1$V1,
+    title = paste("Recommended States (",nrow(d),") Participants",sep=""),
+    opacity = 0.7
+  )
+new_map
+})
+```
+
+Utah{data-navmenu="Tax Incentives" data-icon="fa-map-marker"}
+=======================================================================
+
+Column {.sidebar}
+-----------------------------------------------------------------------
+
+```{r}
+## INPUTS FOR THIS PAGE
+selectizeInput("nps3","Sort by Promoter Score",choices=c(unique(dat$Recommend_NPS)),multiple=TRUE,selected="Overall")
+selectizeInput("industry3","Sort by Industry",choices=c(unique(dat$Industry)),multiple=TRUE,selected="Overall")
+renderText({
+  x<-input$industry3
+  y<-input$nps3
+d<-dat%>% filter(Recommend_NPS %in% y,Industry %in% x) %>% dplyr::select(RespondeID)%>% distinct
+paste("Number of unique participants: ",nrow(d))
+})
+```
+
+Column {data-height=400}
+------------------------------------------------------------------------------
+
+### How does Utah's Tax incentive compare?
+
+```{r}
+## A TABLE WITH THE COMPARISON OF UTAH'S TAX INCENTIVE
+withSpinner(tagList(DT::renderDataTable({
+  x<-input$industry3
+y<-input$nps3
+d<-dat %>% filter(Recommend_NPS %in% y,Industry %in% x) %>% dplyr::select(RespondeID,CompareIncentivesAllStates)%>%distinct%>% plyr::count("CompareIncentivesAllStates")%>%
+  filter(CompareIncentivesAllStates!="",
+         CompareIncentivesAllStates!="Donot Know",
+         )%>% mutate(percent=freq/sum(freq))
+d$CompareIncentivesAllStates<-factor(d$CompareIncentivesAllStates,levels=c("Worse","Same","Better"))
+d<-d %>% rename(`How does Utah compare?`=CompareIncentivesAllStates,`%`=percent)%>% dplyr::select(-freq)
+DT::datatable(d, rownames = F, options = list(
+  initComplete = JS(
+    "function(settings, json) {",
+    "$(this.api().table().header()).css({'background-color': '#002080', 'color': '#fff'});",
+    "}")))%>% formatPercentage("%",1)
+
+
+
+})))
+```
+
+### What can be done to make Utah's incentive more competitive?
+
+```{r}
+## RESPONSES TO THIS QUESTION RANKED BY NUMBER OF VOTES
+withSpinner(tagList(DT::renderDataTable({
+  x<-input$industry3
+y<-input$nps3
+d<-dat %>% filter(Recommend_NPS %in% y,Industry %in% x)%>% 
+  dplyr::select(RespondeID,RateImpact_LongTerm, RateImpact_UpfrontCash, RateImpact_Rebates,
+                      RateImpact_AssessValCaps, RateImpact_FeeLieuTax) %>% distinct
+d[,2:6]<-lapply(d[,2:6],function(x)mean(x,na.rm=T))
+d <- d[,2:6] %>% distinct %>% gather()%>% mutate(
+  key=ifelse(key=="RateImpact_AssessValCaps",'Assessed valuation caps on real / personal property',key),
+  key=ifelse(key=="RateImpact_FeeLieuTax",'Fee-in-lieu-of-tax programs',key),
+  key=ifelse(key=="RateImpact_Rebates",'Higher percent rebates (30%+)',key),
+  key=ifelse(key=="RateImpact_LongTerm",'Longer terms (20+ years)',key),
+  key=ifelse(key=="RateImpact_UpfrontCash",'Offer up-front cash',key)) %>%
+  arrange(value) %>% mutate(index=row_number()) %>% dplyr::select(index,key)%>% rename(Rank=index,Tactic=key)
+DT::datatable(d, rownames = F, options = list(
+  initComplete = JS(
+    "function(settings, json) {",
+    "$(this.api().table().header()).css({'background-color': '#002080', 'color': '#fff'});",
+    "}")))
+})))
+```
+
+Other States{data-navmenu="Tax Incentives" data-icon="fa-map"}
+=======================================================================
+Column {.sidebar}
+-----------------------------------------------------------------------
+
+```{r}
+## INPUTS FOR THIS PAGE
+selectizeInput("nps5","Sort by Promoter Score",choices=c(unique(dat$Recommend_NPS)),multiple=TRUE,selected="Overall")
+selectizeInput("industry5","Sort by Industry",choices=c(unique(dat$Industry)),multiple=TRUE,selected="Overall")
+selectizeInput("state4","Select a State",
+               choices=c(sort(unique(as.character(st$NAME)))),multiple=TRUE,selected="Utah")
+renderText({
+  x<-input$industry5
+  y<-input$nps5
+d<-dat%>% filter(Recommend_NPS %in% y,Industry %in% x) %>% dplyr::select(RespondeID)%>% distinct
+paste("Number of unique participants: ",nrow(d))
+})
+```
+
+
+Column {data-height=600}
+------------------------------------------------------------------------------
+
+### Which states have the best tax incentives?
+
+```{r}
+## MAP WITH THE VOTES FOR BEST TAX INCENTIVE
+renderLeaflet({
+  x<-input$industry5
+y<-input$nps5
+# y<-sample(dat$Recommend_NPS,1)
+# x<-sample(dat[dat$Recommend_NPS %in% y,]$Industry,1)
+d<-dat %>% filter(Industry %in% x,Recommend_NPS %in% y)
+d<-cbind(d[,1],d[,75:122])%>% distinct
+xxx<-nrow(d)
+d<-d[,-1]
+d<-d %>% gather() %>% mutate(value=value-1) %>% group_by(key)%>% summarize(value=sum(value)) %>%
+  mutate(key=gsub("BestIncentive_State_","",key),
+         key=gsub("_","",key),
+         key=gsub("\\."," ",key))%>% rename(NAME=key)
+st1<-sp::merge(st,d)
+st1@data %>% arrange(NAME)%>% filter(is.na(value))
+st1<-st1[st1$NAME %in% d$NAME,]
+ch.pal.count <-colorBin('RdYlGn', domain = (range(st1$value)))
+new_map <- leaflet() %>%
+  addProviderTiles("CartoDB.Positron",
+                   options = providerTileOptions(minZoom = 3,
+                                                 maxZoom = 6)) %>%
+  addPolygons(
+    data = st1,
+    layerId = ~ st1$Name,
+    fillColor = ch.pal.count(st1$value),
+    weight = .5,
+    opacity = 1,
+    color = "#666666",
+    dashArray = "",
+    fillOpacity = 0.7,
+    highlight = highlightOptions(
+      weight = .5,
+      color = 'black',
+      dashArray = '',
+      fillOpacity = 0.7,
+      bringToFront = TRUE
+    ),
+      label =  st1$NAME
+  ) %>%
+  addLabelOnlyMarkers(
+    lng = coordinates(st1)[, 1],
+    lat = coordinates(st1)[, 2],
+    label = as.character(round(st1$value,1)),
+    labelOptions = labelOptions(
+      noHide = T,
+      direction = 'center',
+      textOnly = T,
+      textsize = '15px'
+    )
+  ) %>%
+  leaflet::addLegend(
+    "topright",
+    pal = ch.pal.count,
+    values =  st1$V1,
+    title = paste("Recommended States (",xxx,") Participants",sep=""),
+    opacity = 0.7
+  )
+new_map
+})
+```
+
+### Why do these states have good incentives?
+
+```{r}
+## EXPLANATION FOR WHY A CERTAIN STATE IS CONSIDERED ADVANTAGEOUS IN TERMS OF TAX INCENTIVE
+withSpinner(tagList(DT::renderDataTable({
+  x<-input$industry5
+  y<-input$nps5
+  d<-dat %>% filter(Industry %in% x,Recommend_NPS %in% y)
+d<-cbind(d[,1],d[,75:122])%>% distinct %>% rename(RespondeID=`d[, 1]`)
+finder<-function(x){
+  d %>% filter(x>1)%>% dplyr::select(RespondeID)
+}
+d<-as.data.frame(do.call('rbind',lapply(d[,2:49],function(x)finder(x))))
+d<-d%>%mutate(key=gsub("BestIncentive_State_","",rownames(d)),
+         key=gsub("_","",key),
+         key=gsub("\\."," ",key),
+         key=trimws(gsub(" [0-9].*"," ",key))
+         )%>% rename(NAME=key)
+
+d1<-d %>% filter(NAME %in% input$state4)
+d2<-dat %>% filter(RespondeID%in% d1$RespondeID)
+d2<-d2[,123:128] %>% gather() %>% group_by(key)%>% summarize(value=sum(value,na.rm = T)) %>% 
+  mutate(key=gsub("BestIncentiveReason_","",key)) %>% arrange(desc(value)) %>%
+  mutate(value=paste(round(100*value/sum(value),1),"%",sep=""))
+names(d2)<-c("Reason","% of votes")
+DT::datatable(d2, rownames = F, options = list(
+  initComplete = JS(
+    "function(settings, json) {",
+    "$(this.api().table().header()).css({'background-color': '#002080', 'color': '#fff'});",
+    "}")))
+})))
+```
+

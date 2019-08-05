@@ -1,0 +1,13 @@
+name: EDC_UTAH_DASHBOARD
+title: EDC_UTAH_DASHBOARD
+username:
+account: kayden-maughan
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 1065138
+bundleId: 2286795
+url: https://kayden-maughan.shinyapps.io/EDC_UTAH_DASHBOARD/
+when: 1564759699.68251
+asMultiple: FALSE
+asStatic: FALSE
+additionalFiles: tempdir/STATE.shx|tempdir/STATE.dbf|tempdir/STATE.prj
